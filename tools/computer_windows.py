@@ -66,12 +66,12 @@ def chunks(s: str, chunk_size: int) -> list[str]:
 
 class ComputerTool(BaseAnthropicTool):
     """
-    A tool that allows the agent to interact with the screen, keyboard, and mouse of the current Windows computer.
+    A tool that allows the agent to interact with the screen, keyboard, and mouse.
     The tool parameters are defined by Anthropic and are not editable.
     """
 
     name: Literal["computer"] = "computer"
-    api_type: Literal["computer_20241022"] = "computer_20241022"
+    api_type: Literal["computer_20250124"] = "computer_20250124"
     width: int
     height: int
     display_num: int | None
@@ -165,9 +165,40 @@ class ComputerTool(BaseAnthropicTool):
             "right_click",
             "double_click",
             "middle_click",
-            "screenshot",
-            "cursor_position",
         ):
+            if text is not None:
+                raise ToolError(f"text is not accepted for {action}")
+            
+            # Handle coordinates for click actions
+            if coordinate is not None:
+                if not isinstance(coordinate, list) or len(coordinate) != 2:
+                    raise ToolError(f"{coordinate} must be a tuple of length 2")
+                if not all(isinstance(i, int) and i >= 0 for i in coordinate):
+                    raise ToolError(f"{coordinate} must be a tuple of non-negative ints")
+                
+                x, y = self.scale_coordinates(
+                    ScalingSource.API, coordinate[0], coordinate[1]
+                )
+                
+                click_functions = {
+                    "left_click": lambda: pyautogui.click(x, y, button='left'),
+                    "right_click": lambda: pyautogui.click(x, y, button='right'),
+                    "middle_click": lambda: pyautogui.click(x, y, button='middle'),
+                    "double_click": lambda: pyautogui.doubleClick(x, y),
+                }
+            else:
+                # Click at current cursor position
+                click_functions = {
+                    "left_click": lambda: pyautogui.click(button='left'),
+                    "right_click": lambda: pyautogui.click(button='right'),
+                    "middle_click": lambda: pyautogui.click(button='middle'),
+                    "double_click": lambda: pyautogui.doubleClick(),
+                }
+            
+            click_functions[action]()
+            return ToolResult()
+
+        if action in ("screenshot", "cursor_position"):
             if text is not None:
                 raise ToolError(f"text is not accepted for {action}")
             if coordinate is not None:
@@ -183,15 +214,6 @@ class ComputerTool(BaseAnthropicTool):
                     y
                 )
                 return ToolResult(output=f"X={x},Y={y}")
-            else:
-                click_functions = {
-                    "left_click": lambda: pyautogui.click(button='left'),
-                    "right_click": lambda: pyautogui.click(button='right'),
-                    "middle_click": lambda: pyautogui.click(button='middle'),
-                    "double_click": lambda: pyautogui.doubleClick(),
-                }
-                click_functions[action]()
-                return ToolResult()
 
         raise ToolError(f"Invalid action: {action}")
 

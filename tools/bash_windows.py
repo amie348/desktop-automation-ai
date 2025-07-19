@@ -124,40 +124,277 @@ class AsyncWindowsShell:
                 return result.returncode, f"Command failed: {error}", result.stderr
         except Exception as e:
             error_msg = f"""Failed to execute system command:
-Command: {command}
-Error: {str(e)}
-System32 Path: {system32_path}
-Command Exists: {os.path.exists(cmd_path)}"""
+            Command: {command}
+            Error: {str(e)}
+            System32 Path: {system32_path}
+            Command Exists: {os.path.exists(cmd_path)}"""
             return 1, error_msg, ""
 
-    async def run(self, command: str) -> tuple[int, str, str]:
-        """Run a command in the shell and return exit code, stdout, and stderr."""
-        # Get base command for routing
-        base_cmd = command.split()[0].lower()
-        
-        # Handle system commands
-        system_commands = {
-            'systeminfo', 'wmic', 'ver', 'powershell',
-            'sc', 'net', 'reg', 'tasklist', 'schtasks',
-            'gpresult', 'whoami', 'hostname'
-        }
-        
-        if base_cmd in system_commands:
-            return await self._run_system_cmd(command)
+    async def _run_web_command(self, command: str) -> tuple[int, str, str]:
+        """Execute web commands like curl, wget with longer timeouts."""
+        try:
+            # Check if curl is available, if not suggest alternatives
+            base_cmd = command.split()[0].lower()
             
-        # Handle network commands
-        if base_cmd in ['ping', 'ipconfig', 'netstat', 'tracert', 'nslookup']:
-            return await self._run_network_command(command)
+            if base_cmd == 'curl':
+                # First try to run curl directly
+                try:
+                    # Show exactly what command is being executed for debugging
+                    print(f"DEBUG: Executing curl command: {command}")
+                    
+                    process = subprocess.run(
+                        command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        shell=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                        timeout=60,  # 60 second timeout for web requests
+                        text=True,
+                        encoding='utf-8',
+                        errors='ignore'
+                    )
+                    
+                    if process.returncode == 0:
+                        return 0, process.stdout, process.stderr
+                    else:
+                        error_msg = process.stderr if process.stderr else process.stdout
+                        
+                        # Check for specific curl errors and provide alternatives
+                        if "URL rejected: Bad hostname" in error_msg or "Could not resolve host" in error_msg:
+                            # Extract URL and file path from command for PowerShell alternative
+                            import re
+                            url_match = re.search(r'https?://[^\s"]+', command)
+                            file_match = re.search(r'file=@([^\s"\']+)', command)
+                            
+                            if url_match and file_match:
+                                url = url_match.group(0)
+                                file_path = file_match.group(1)
+                                
+                                # Create PowerShell multipart form data command
+                                powershell_cmd = f'''powershell -Command "
+                                $filePath = '{file_path}'
+                                $url = '{url}'
+                                $boundary = [System.Guid]::NewGuid().ToString()
+                                $bodyLines = @()
+                                $bodyLines += '--' + $boundary
+                                $bodyLines += 'Content-Disposition: form-data; name=\\"file\\"; filename=\\"' + [System.IO.Path]::GetFileName($filePath) + '\\"'
+                                $bodyLines += 'Content-Type: application/octet-stream'
+                                $bodyLines += ''
+                                $fileBytes = [System.IO.File]::ReadAllBytes($filePath)
+                                $bodyLines += [System.Text.Encoding]::GetEncoding('iso-8859-1').GetString($fileBytes)
+                                $bodyLines += '--' + $boundary + '--'
+                                $body = $bodyLines -join '`r`n'
+                                try {{
+                                    $response = Invoke-WebRequest -Uri $url -Method POST -Body $body -ContentType \\"multipart/form-data; boundary=$boundary\\"
+                                    Write-Output \\"Upload successful. Status: $($response.StatusCode)\\"
+                                    Write-Output $response.Content
+                                }} catch {{
+                                    Write-Error \\"PowerShell upload failed: $($_.Exception.Message)\\"
+                                }}
+                                "'''
+                                
+                                return process.returncode, f"""CURL FAILED with hostname error.
+
+                                        EXECUTED COMMAND: {command}
+                                        CURL ERROR: {error_msg}
+
+                                        SOLUTION 1 - Try this PowerShell alternative:
+                                        {powershell_cmd}
+
+                                        SOLUTION 2 - Test DNS resolution:
+                                        nslookup {url.split('/')[2]}
+
+                                        SOLUTION 3 - Test basic curl:
+                                        curl -I {url.split('/')[0]}//{url.split('/')[2]}
+
+                                        DEBUG INFO:
+                                        - Original command: {command}
+                                        - Detected URL: {url}
+                                        - Detected file: {file_path}
+                                        - File exists: {os.path.exists(file_path)}
+                                """, process.stderr
+                            else:
+                                return process.returncode, f"""CURL FAILED with hostname error.
+
+                                    EXECUTED COMMAND: {command}
+                                    CURL ERROR: {error_msg}
+
+                                    Could not parse URL or file path from command. Please check the command format.
+                                    Expected format: curl -X POST -F "file=@/path/to/file" https://url.com/endpoint
+                                """, process.stderr
+                        
+                        return process.returncode, f"""CURL FAILED:
+
+                                EXECUTED COMMAND: {command}
+                                ERROR MESSAGE: {error_msg}
+
+                                Try running the command manually in cmd to verify it works.
+                        """, process.stderr
+                        
+                except FileNotFoundError:
+                    # curl not found, suggest alternatives
+                    import re
+                    url_match = re.search(r'https?://[^\s"]+', command)
+                    file_match = re.search(r'file=@([^\s"\']+)', command)
+                    
+                    if url_match and file_match:
+                        url = url_match.group(0)
+                        file_path = file_match.group(1)
+                        
+                        powershell_alternative = f'''powershell -Command "
+                                    $filePath = '{file_path}'
+                                    $url = '{url}'
+                                    $boundary = [System.Guid]::NewGuid().ToString()
+                                    $bodyLines = @()
+                                    $bodyLines += '--' + $boundary
+                                    $bodyLines += 'Content-Disposition: form-data; name=\\"file\\"; filename=\\"' + [System.IO.Path]::GetFileName($filePath) + '\\"'
+                                    $bodyLines += 'Content-Type: application/octet-stream'
+                                    $bodyLines += ''
+                                    $fileBytes = [System.IO.File]::ReadAllBytes($filePath)
+                                    $bodyLines += [System.Text.Encoding]::GetEncoding('iso-8859-1').GetString($fileBytes)
+                                    $bodyLines += '--' + $boundary + '--'
+                                    $body = $bodyLines -join '`r`n'
+                                    $response = Invoke-WebRequest -Uri $url -Method POST -Body $body -ContentType \\"multipart/form-data; boundary=$boundary\\"
+                                    Write-Output \\"Upload successful. Status: $($response.StatusCode)\\"
+                                    "'''
+                        
+                        return 1, f"""CURL NOT FOUND - curl is not installed or not in PATH.
+
+                            SOLUTION 1 - Use this PowerShell alternative (ready to run):
+                            {powershell_alternative}
+
+                            SOLUTION 2 - Install curl:
+                            winget install curl.curl
+
+                            SOLUTION 3 - Install curl via chocolatey:
+                            choco install curl
+
+                            DEBUG INFO:
+                            - Detected URL: {url}
+                            - Detected file: {file_path}
+                            - File exists: {os.path.exists(file_path)}
+                        """, ""
+                    else:
+                        return 1, """CURL NOT FOUND - curl is not installed or not in PATH.
+
+SOLUTIONS:
+1. Install curl: winget install curl.curl
+2. Install via chocolatey: choco install curl  
+3. Use PowerShell: powershell Invoke-WebRequest -Uri "URL" -Method POST -InFile "file.zip"
+                        """, ""
+                except subprocess.TimeoutExpired:
+                    return 1, "Curl command timed out after 60 seconds", ""
+                    
+            elif base_cmd == 'wget':
+                # wget is typically not available on Windows, suggest alternatives
+                return 1, """wget is not available on Windows by default.
+                
+Alternatives:
+1. Use PowerShell: powershell Invoke-WebRequest -Uri "URL" -OutFile "filename"
+2. Use curl: curl -O "URL"
+3. Use certutil: certutil -urlcache -split -f "URL" "filename"
+                """, ""
+                
+            elif base_cmd == 'certutil':
+                # certutil is available on Windows
+                process = subprocess.run(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    shell=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    timeout=60,
+                    text=True,
+                    encoding='utf-8',
+                    errors='ignore'
+                )
+                
+                if process.returncode == 0:
+                    return 0, process.stdout, process.stderr
+                else:
+                    error_msg = process.stderr if process.stderr else process.stdout
+                    return process.returncode, f"Certutil command failed: {error_msg}", process.stderr
+            
+            # Default handling for other web commands
+            process = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=60,
+                text=True,
+                encoding='utf-8',
+                errors='ignore'
+            )
+            
+            if process.returncode == 0:
+                return 0, process.stdout, process.stderr
+            else:
+                error_msg = process.stderr if process.stderr else process.stdout
+                return process.returncode, f"Web command failed: {error_msg}", process.stderr
+                
+        except subprocess.TimeoutExpired:
+            return 1, "Web command timed out after 60 seconds", ""
+        except Exception as e:
+            return 1, f"Failed to execute web command: {str(e)}", ""
+
+    async def run(self, command: str, _skip_compound: bool = False) -> tuple[int, str, str]:
+        """Run a command in the shell and return exit code, stdout, and stderr."""
+        try:
+            print(f"DEBUG: Original command: {command}, skip_compound: {_skip_compound}")
+            
+            # Convert Unix-style paths and commands to Windows equivalents
+            converted_command = self._convert_unix_to_windows(command)
+            print(f"DEBUG: Converted command: {converted_command}")
+            
+            # Handle compound commands (commands with && or ||)
+            if not _skip_compound and ('&&' in converted_command or '||' in converted_command):
+                print("DEBUG: Processing as compound command")
+                return await self._run_compound_command(converted_command)
+            
+            # Get base command for routing
+            base_cmd = converted_command.split()[0].lower()
+            print(f"DEBUG: Base command: {base_cmd}")
+            
+            # Handle system commands
+            system_commands = {
+                'systeminfo', 'wmic', 'ver', 'powershell',
+                'sc', 'net', 'reg', 'tasklist', 'schtasks',
+                'gpresult', 'whoami', 'hostname'
+            }
+            
+            if base_cmd in system_commands:
+                print("DEBUG: Processing as system command")
+                return await self._run_system_cmd(converted_command)
+                
+            # Handle network commands
+            if base_cmd in ['ping', 'ipconfig', 'netstat', 'tracert', 'nslookup']:
+                print("DEBUG: Processing as network command")
+                return await self._run_network_command(converted_command)
+                
+            # Handle web/download commands
+            if base_cmd in ['curl', 'wget', 'certutil']:
+                print("DEBUG: Processing as web command")
+                return await self._run_web_command(converted_command)
+
+            print("DEBUG: Processing as regular command")
+            return await self._run_regular_command(converted_command)
+            
+        except Exception as e:
+            error_msg = f"BASH TOOL ERROR: Failed to execute command '{command}'\nError: {str(e)}\nType: {type(e).__name__}"
+            print(f"DEBUG: {error_msg}")
+            return 1, error_msg, str(e)
+
+    async def _run_regular_command(self, command: str) -> tuple[int, str, str]:
+        """Handle regular commands with proper error reporting."""
         try:
             cwd = os.getcwd()
+            print(f"DEBUG: Current working directory: {cwd}")
             
-            # Define system commands that need special handling
-            system_commands = {
-                'systeminfo', 'wmic', 'ver', 'gpresult',
-                'schtasks', 'sc', 'net', 'reg'
-            }
-
-            # Special handling for common Windows commands
+            # Get base command for routing
+            base_cmd = command.split()[0].lower()
+            
             # Define command mappings with their Windows equivalents
             simple_commands = {
                 # Basic file and directory operations
@@ -241,16 +478,20 @@ Command Exists: {os.path.exists(cmd_path)}"""
                 
                 # Service management
                 'sc': lambda x: f'sc {x}',  # service control
-                'net': lambda x: f'net {x}'  # network services and resources
+                'net': lambda x: f'net {x}',  # network services and resources
+                
+                # Web and download tools
+                'curl': lambda x: f'curl {x}',  # HTTP client
+                'wget': lambda x: f'wget {x}',  # Download tool
+                'certutil': lambda x: f'certutil {x}',  # Certificate utility (can download files)
             }
             
-            # Extract the base command
-            base_cmd = command.split()[0].lower()
-            
             if base_cmd in simple_commands:
+                print(f"DEBUG: Command '{base_cmd}' found in simple_commands")
                 try:
                     # Get all arguments after the command
                     args = command.split(None, 1)[1] if len(command.split()) > 1 else ''
+                    print(f"DEBUG: Command arguments: '{args}'")
                     
                     # Handle different command types
                     if callable(simple_commands[base_cmd]):
@@ -297,44 +538,72 @@ Command Exists: {os.path.exists(cmd_path)}"""
                     elif base_cmd in ['tasklist', 'netstat']:
                         cmd += ' /FO TABLE'  # Format as table
                         
+                    print(f"DEBUG: Final command to execute: {cmd}")
+                        
                 except Exception as e:
-                    return 1, f"Error processing {base_cmd} command: {str(e)}", ""
+                    error_msg = f"Error processing {base_cmd} command: {str(e)}"
+                    print(f"DEBUG: {error_msg}")
+                    return 1, error_msg, ""
                 
-                # Network commands need shell=True to work properly
-                use_shell = base_cmd in ['ping', 'ipconfig', 'netstat', 'tracert', 'nslookup']
+                # Execute the command
+                full_cmd = f'cmd /c {cmd}'
+                print(f"DEBUG: Executing: {full_cmd}")
                 
-                process = await asyncio.create_subprocess_shell(
-                    f'cmd /c {cmd}',
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                    shell=use_shell
-                )
-                stdout, stderr = await process.communicate()
                 try:
-                    output = stdout.decode('utf-8') if stdout else ''
-                except UnicodeDecodeError:
-                    output = stdout.decode('cp1252', errors='ignore') if stdout else ''
-                
-                if process.returncode == 0:
-                    return 0, output or f"Successfully executed {base_cmd} command", ""
-                else:
-                    error = stderr.decode('utf-8', errors='ignore') if stderr else "Command failed"
-                    return process.returncode, error, ""
+                    process = await asyncio.create_subprocess_shell(
+                        full_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                        shell=True,
+                        cwd=cwd
+                    )
+                    stdout, stderr = await process.communicate()
+                    
+                    # Decode output
+                    try:
+                        output = stdout.decode('utf-8') if stdout else ''
+                    except UnicodeDecodeError:
+                        output = stdout.decode('cp1252', errors='ignore') if stdout else ''
+                    
+                    try:
+                        error = stderr.decode('utf-8') if stderr else ''
+                    except UnicodeDecodeError:
+                        error = stderr.decode('cp1252', errors='ignore') if stderr else ''
+                    
+                    print(f"DEBUG: Command completed with return code: {process.returncode}")
+                    print(f"DEBUG: Output length: {len(output)} characters")
+                    print(f"DEBUG: Error length: {len(error)} characters")
+                    
+                    if process.returncode == 0:
+                        return 0, output or f"Successfully executed {base_cmd} command", error
+                    else:
+                        error_msg = f"Command '{cmd}' failed with return code {process.returncode}\nOutput: {output}\nError: {error}"
+                        return process.returncode, error_msg, error
+                        
+                except Exception as e:
+                    error_msg = f"Failed to execute command '{full_cmd}': {str(e)}"
+                    print(f"DEBUG: Execution error: {error_msg}")
+                    return 1, error_msg, ""
 
             # Special handling for directory creation
             if command.lower().startswith(('md ', 'mkdir ')):
+                print("DEBUG: Processing mkdir command")
                 try:
                     # Extract directory name
                     dir_name = command.split('"')[1] if '"' in command else command.split(' ', 1)[1]
+                    print(f"DEBUG: Creating directory: {dir_name}")
                     # Create directory directly using Python
                     os.makedirs(dir_name, exist_ok=True)
                     return 0, f"Successfully created directory: {dir_name}", ""
                 except Exception as dir_e:
-                    return 1, f"Failed to create directory: {str(dir_e)}", ""
+                    error_msg = f"Failed to create directory: {str(dir_e)}"
+                    print(f"DEBUG: {error_msg}")
+                    return 1, error_msg, ""
             
             # Special handling for directory removal
             elif command.lower().startswith(('rmdir ', 'rd ')):
+                print("DEBUG: Processing rmdir command")
                 try:
                     # Parse command
                     parts = command.split()
@@ -344,6 +613,8 @@ Command Exists: {os.path.exists(cmd_path)}"""
                         dir_name = command.split('"')[1]
                     else:
                         dir_name = next(part for part in parts[1:] if not part.startswith('/'))
+                    
+                    print(f"DEBUG: Removing directory: {dir_name}, force: {force_remove}")
                     
                     if force_remove:
                         import shutil
@@ -358,34 +629,17 @@ Command Exists: {os.path.exists(cmd_path)}"""
                         return 1, f"Directory not empty: {dir_name}. Use 'rmdir /s {dir_name}' to remove directory and its contents.", ""
                     return 1, f"Failed to remove directory: {str(e)}", ""
             
-            # For other commands
-            # Create a wrapped PowerShell command that captures output
-            # Escape any double quotes in the command
-            escaped_command = command.replace('"', '`"')
+            # For other commands, run them directly with cmd
+            print("DEBUG: Running command directly with cmd")
+            full_cmd = f'cmd /c {command}'
+            print(f"DEBUG: Direct execution: {full_cmd}")
             
-            ps_command = (
-                '$ErrorActionPreference = "Stop"; '
-                '$output = @{}; '
-                'try { '
-                    f'$process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c {escaped_command}" -NoNewWindow -Wait -PassThru; '
-                    '$output.exitcode = $process.ExitCode; '
-                    '$output.stdout = "Command executed"; '
-                    '$output.stderr = ""; '
-                '} '
-                'catch { '
-                    '$output.exitcode = 1; '
-                    '$output.stdout = ""; '
-                    '$output.stderr = $_.Exception.Message; '
-                '} '
-                '$output | ConvertTo-Json;'
-            )
-            
-            # Run the PowerShell command
             process = await asyncio.create_subprocess_shell(
-                f'powershell.exe -Command "{ps_command}"',
+                full_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 creationflags=subprocess.CREATE_NO_WINDOW,
+                shell=True,
                 cwd=cwd
             )
 
@@ -395,44 +649,111 @@ Command Exists: {os.path.exists(cmd_path)}"""
                 stdout_str = stdout.decode('utf-8') if stdout else ''
                 stderr_str = stderr.decode('utf-8') if stderr else ''
             except UnicodeDecodeError:
-                stdout_str = stdout.decode('cp1252') if stdout else ''
-                stderr_str = stderr.decode('cp1252') if stderr else ''
+                stdout_str = stdout.decode('cp1252', errors='ignore') if stdout else ''
+                stderr_str = stderr.decode('cp1252', errors='ignore') if stderr else ''
 
-            # Check if the command seems to have succeeded
+            print(f"DEBUG: Direct command completed with return code: {process.returncode}")
+            
             if process.returncode == 0:
-                # Verify the directory was created by checking dir output again
-                verify_process = await asyncio.create_subprocess_shell(
-                    'dir',
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                verify_out, _ = await verify_process.communicate()
-                verify_str = verify_out.decode('utf-8', errors='ignore')
-                
-                if command.lower().startswith(('md ', 'mkdir ')):
-                    # Extract directory name and check if it appears in the new listing
-                    dir_name = command.split('"')[1] if '"' in command else command.split(' ', 1)[1]
-                    if dir_name.lower() not in verify_str.lower():
-                        return 1, f"Directory creation failed. Current directory contents:\n{verify_str}", ""
-                
-                return 0, "Command executed successfully", ""
+                return 0, stdout_str or "Command executed successfully", stderr_str
             else:
-                error_output = stderr_str if stderr_str else stdout_str
-                diagnostic = f"Command failed: {error_output if error_output else 'Unknown error'}"
-                return process.returncode, diagnostic, stderr_str
+                error_msg = f"Command '{command}' failed with return code {process.returncode}\nOutput: {stdout_str}\nError: {stderr_str}"
+                return process.returncode, error_msg, stderr_str
 
         except Exception as e:
-            # For directory commands, try direct execution
-            if command.lower() in ['dir', 'cd']:
-                try:
-                    dir_out = subprocess.check_output('dir', shell=True).decode('utf-8', errors='ignore')
-                    return 0, dir_out, ''
-                except Exception as dir_e:
-                    return 1, f"Failed to get directory listing: {str(dir_e)}", ''
+            error_msg = f"REGULAR COMMAND ERROR: Failed to execute '{command}'\nError: {str(e)}\nType: {type(e).__name__}"
+            print(f"DEBUG: {error_msg}")
+            return 1, error_msg, str(e)
+
+    def _convert_unix_to_windows(self, command: str) -> str:
+        """Convert Unix-style commands and paths to Windows equivalents."""
+        # Don't modify URLs in the command
+        if 'http://' in command or 'https://' in command:
+            # Only convert ~ to home directory, leave URLs alone
+            if '~' in command:
+                home_dir = os.path.expanduser('~')
+                # Be more careful about ~ replacement near URLs
+                import re
+                # Replace ~ only when it's clearly a path (not part of URL)
+                command = re.sub(r'(?<!://[^/]*?)~(?=/)', f'"{home_dir}"', command)
+                command = re.sub(r'^~(?=/)', f'"{home_dir}"', command)
+                command = re.sub(r'\s~(?=/)', f' "{home_dir}"', command)
+            return command
+        
+        # Convert ~ to user home directory
+        if '~' in command:
+            home_dir = os.path.expanduser('~')
+            command = command.replace('~/', f'"{home_dir}\\').replace('~', f'"{home_dir}"')
+        
+        # Convert forward slashes to backslashes in paths
+        # Be careful not to convert URLs or command switches
+        import re
+        # Look for path-like patterns and convert them
+        command = re.sub(r'(?<!/)/(?!/)', '\\\\', command)
+        
+        return command
+
+    async def _run_compound_command(self, command: str) -> tuple[int, str, str]:
+        """Handle compound commands with && or || operators."""
+        try:
+            print(f"DEBUG: Processing compound command: {command}")
             
-            # For other commands, just show the error
-            error_msg = f"Command failed: {str(e)}"
-            return 1, error_msg, ''
+            # Split on && or || but preserve the operator
+            if '&&' in command:
+                parts = command.split('&&')
+                operator = '&&'
+            else:
+                parts = command.split('||')
+                operator = '||'
+            
+            print(f"DEBUG: Split into {len(parts)} parts using '{operator}' operator")
+            for i, part in enumerate(parts):
+                print(f"DEBUG: Part {i+1}: '{part.strip()}'")
+            
+            all_output = []
+            last_returncode = 0
+            
+            for i, part in enumerate(parts):
+                part = part.strip()
+                if not part:
+                    print(f"DEBUG: Skipping empty part {i+1}")
+                    continue
+                
+                print(f"DEBUG: Executing part {i+1}: '{part}'")
+                
+                # Run each part
+                returncode, stdout, stderr = await self.run(part, _skip_compound=True)
+                
+                print(f"DEBUG: Part {i+1} completed with return code: {returncode}")
+                print(f"DEBUG: Part {i+1} output length: {len(stdout) if stdout else 0}")
+                print(f"DEBUG: Part {i+1} error length: {len(stderr) if stderr else 0}")
+                
+                if stdout:
+                    all_output.append(stdout)
+                
+                # Handle operator logic
+                if operator == '&&' and returncode != 0:
+                    # With &&, stop on first failure
+                    error_msg = stderr if stderr else f"Command failed: {part}"
+                    print(f"DEBUG: Stopping && chain due to failure in part {i+1}")
+                    return returncode, '\n'.join(all_output), error_msg
+                elif operator == '||' and returncode == 0:
+                    # With ||, stop on first success
+                    print(f"DEBUG: Stopping || chain due to success in part {i+1}")
+                    return 0, '\n'.join(all_output), ""
+                
+                last_returncode = returncode
+            
+            final_output = '\n'.join(all_output)
+            print(f"DEBUG: Compound command completed with final return code: {last_returncode}")
+            print(f"DEBUG: Final output length: {len(final_output)}")
+            
+            return last_returncode, final_output, ""
+
+        except Exception as e:
+            error_msg = f"COMPOUND COMMAND ERROR: Failed to execute '{command}'\nError: {str(e)}\nType: {type(e).__name__}"
+            print(f"DEBUG: {error_msg}")
+            return 1, error_msg, str(e)
 
     async def stop(self):
         """Stop the shell process."""
@@ -452,7 +773,7 @@ class BashTool(BaseAnthropicTool):
     """
 
     name: Literal["bash"] = "bash"
-    api_type: Literal["bash_20241022"] = "bash_20241022"
+    api_type: Literal["bash_20250124"] = "bash_20250124"
     _session: AsyncWindowsShell
 
     def __init__(self):
