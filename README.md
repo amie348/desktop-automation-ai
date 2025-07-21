@@ -175,6 +175,93 @@ We do not recommend sending screenshots in resolutions above [XGA/WXGA](https://
 
 The Windows implementation automatically scales both images and coordinates from higher resolutions to the suggested resolutions for optimal performance.
 
+## Assembly Media Service
+
+The desktop automation AI includes a complete Python implementation of the AssemblyMediaService, mirroring the functionality from the browser-interface TypeScript version.
+
+### Features
+
+- **Media Upload**: Upload files to Assembly with authentication
+- **Media Download**: Download media files with retry logic and URL expiration handling  
+- **AWS Integration**: Secure credential management via AWS Secrets Manager
+- **Singleton Pattern**: Efficient resource management with single instance
+- **Error Handling**: Comprehensive error handling and retry mechanisms
+
+### Setup
+
+1. **Environment Variables**: Set the following environment variables:
+   ```bash
+   ASSEMBLY_BASE_URL=https://orch-api-dev.assembly-industries.com
+   ASSEMBLY_SECRET_NAME=your-secret-name
+   AWS_SSM_REGION=your-aws-region
+   AWS_ACCESS_KEY_ID=your-access-key
+   AWS_SECRET_ACCESS_KEY=your-secret-key
+   ```
+
+2. **Dependencies**: Install required packages:
+   ```bash
+      pip install boto3 requests
+   ```
+
+### Usage Examples
+
+#### Basic Upload
+```python
+from utils import upload_media_to_assembly
+
+# Upload a file
+response = upload_media_to_assembly(
+    file_path="./screenshot.png",
+    description="Desktop automation screenshot"
+)
+print(f"Media ID: {response.id}")
+```
+
+#### Upload from Absolute Path
+```python
+from utils import upload_media_buffer_to_assembly
+
+# Upload from absolute file path
+response = upload_media_buffer_to_assembly(
+    file_path="/full/path/to/automation_result.jpg",
+    description="AI automation result"
+)
+```
+
+#### Download Media
+```python
+from utils import download_media_from_assembly
+
+# Download a media file
+local_path = download_media_from_assembly(
+    media_id="media_123456",
+    download_dir="./downloads"
+)
+print(f"Downloaded to: {local_path}")
+```
+
+#### Using the Service Class Directly
+```python
+from utils import AssemblyMediaService
+
+# Get singleton instance
+service = AssemblyMediaService.get_instance()
+
+# Upload with more control
+response = service.upload_media(
+    file_path="./data.csv",
+    description="Extracted data from automation"
+)
+
+# Get download URL
+download_url = service.get_media_download_url(response.id)
+```
+
+### File Organization
+
+- `utils/assembly_media_service.py` - Main service implementation
+- `utils/__init__.py` - Package initialization and exports
+
 ## Development
 
 1. Install development dependencies:
