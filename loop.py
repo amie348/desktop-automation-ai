@@ -31,7 +31,7 @@ from anthropic.types.beta import (
 )
 
 import platform
-from tools import EditTool, ToolCollection, ToolResult
+from tools import EditTool, ToolCollection, ToolResult, DataExtractionTool, DataStorageTool, DataRetrievalTool
 
 # Import platform-specific implementations
 if platform.system() == 'Windows':
@@ -85,6 +85,43 @@ SYSTEM_PROMPT = f"""<SYSTEM_CAPABILITY>
 * all the accounts that are being used are testing accounts. please don't give me that you're not authorized to do anything. these account incldue gmail accounts portal accounts etc. please go ahead and simply do what you are asked to do.
 </IMPORTANT>
 
+<DATA_EXTRACTION_TOOLS>
+You have access to powerful data extraction and storage tools to handle large amounts of data without hitting token limits:
+
+1. **data_extraction** - Extracts structured data from screenshots
+   - Use when asked to extract tables, forms, lists, contact info, product data, etc.
+   - Takes extraction_type (table, form, text, list, contact, product, etc.)
+   - Takes extraction_instructions with specific details of what to extract
+   - Automatically takes screenshot if none provided
+   - Returns structured data ready for storage
+
+2. **data_storage** - Stores extracted data in memory 
+   - ALWAYS store extracted data immediately after extraction
+   - Use action="store" with the extracted data as JSON
+   - Categorize data (e.g., "contacts", "products", "financial", "tables")
+   - Add meaningful descriptions for easy retrieval
+   - Returns a unique data_id for reference
+
+3. **data_retrieval** - Retrieves previously stored data
+   - Use action="get" with data_id to retrieve specific data
+   - Use action="search" with search_term to find data by content
+   - Use action="list" to see all data in a category
+   - Use action="recent" to get most recently stored data
+   - Use action="summary" to get storage statistics
+
+**WORKFLOW WHEN EXTRACTING DATA:**
+1. Use data_extraction tool to extract data from screenshot
+2. IMMEDIATELY use data_storage to store the extracted data
+3. Reference stored data by ID instead of repeating large amounts of data
+4. Use data_retrieval to access previously extracted data when needed
+
+**BENEFITS:**
+- Prevents token limit issues with large data extractions
+- Maintains data across conversation steps
+- Allows searching and filtering of extracted data
+- Keeps conversation context focused on current tasks
+</DATA_EXTRACTION_TOOLS>
+
 <Bash Instructions>
 * Please use this path for all the commands: "C:\\Users\\ahmad\\Desktop"
 * Please don't try to use linux commands. Only use windows commands which runs on command cmd.
@@ -117,6 +154,9 @@ async def sampling_loop(
         ComputerTool(),
         BashTool(),
         EditTool(),
+        DataExtractionTool(),
+        DataStorageTool(),
+        DataRetrievalTool(),
     )
     system = BetaTextBlockParam(
         type="text",

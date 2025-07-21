@@ -175,6 +175,157 @@ We do not recommend sending screenshots in resolutions above [XGA/WXGA](https://
 
 The Windows implementation automatically scales both images and coordinates from higher resolutions to the suggested resolutions for optimal performance.
 
+## Assembly Media Service
+
+The desktop automation AI now includes a complete Python implementation of the AssemblyMediaService, mirroring the functionality from the browser-interface TypeScript version.
+
+### Features
+
+- **Media Upload**: Upload files or buffers to Assembly with authentication
+- **Media Download**: Download media files with retry logic and URL expiration handling  
+- **AWS Integration**: Secure credential management via AWS Secrets Manager
+- **Singleton Pattern**: Efficient resource management with single instance
+- **Error Handling**: Comprehensive error handling and retry mechanisms
+
+### Setup
+
+1. **Environment Variables**: Set the following environment variables:
+   ```bash
+   ASSEMBLY_BASE_URL=https://orch-api-dev.assembly-industries.com
+   ASSEMBLY_SECRET_NAME=your-secret-name
+   AWS_SSM_REGION=your-aws-region
+   AWS_ACCESS_KEY_ID=your-access-key
+   AWS_SECRET_ACCESS_KEY=your-secret-key
+   ```
+
+2. **Dependencies**: Install required packages:
+   ```bash
+   pip install boto3 requests
+   ```
+
+### Usage Examples
+
+#### Basic Upload
+```python
+from utils import upload_media_to_assembly
+
+# Upload a file
+response = upload_media_to_assembly(
+    file_path="./screenshot.png",
+    description="Desktop automation screenshot"
+)
+print(f"Media ID: {response.id}")
+print(f"Media URL: {response.media}")
+```
+
+#### Upload from Absolute Path (Buffer Function)
+```python
+from utils import upload_media_buffer_to_assembly
+
+# Upload from absolute file path
+response = upload_media_buffer_to_assembly(
+    file_path="/full/path/to/automation_result.jpg",
+    description="AI automation result"
+)
+```
+
+#### Upload from Bytes Buffer
+```python
+from utils import upload_media_bytes_to_assembly
+
+# Upload from bytes buffer
+with open("image.jpg", "rb") as f:
+    buffer_data = f.read()
+
+response = upload_media_bytes_to_assembly(
+    file_buffer=buffer_data,
+    file_name="automation_result.jpg",
+    description="AI automation result"
+)
+```
+
+#### Download Media
+```python
+from utils import download_media_from_assembly
+
+# Download a media file
+local_path = download_media_from_assembly(
+    media_id="media_123456",
+    download_dir="./downloads"
+)
+print(f"Downloaded to: {local_path}")
+```
+
+#### Using the Service Class Directly
+```python
+from utils import AssemblyMediaService
+
+# Get singleton instance
+service = AssemblyMediaService.get_instance()
+
+# Upload with more control
+response = service.upload_media(
+    file_path="./data.csv",
+    description="Extracted data from automation"
+)
+
+# Get download URL
+download_url = service.get_media_download_url(response.id)
+```
+
+### Integration with Data Extraction Tools
+
+The AssemblyMediaService works seamlessly with the data extraction tools to upload screenshots and extracted data:
+
+```python
+# Example: Upload screenshot after data extraction
+from tools.data_extraction import DataExtractionTool
+from utils import upload_media_to_assembly
+
+# Extract data (this takes a screenshot)
+extraction_tool = DataExtractionTool()
+result = await extraction_tool(
+    extraction_type="table",
+    extraction_instructions="Extract product data"
+)
+
+# Upload the screenshot to Assembly for storage
+if result.base64_image:
+    # Convert base64 to file and upload
+    import base64
+    image_data = base64.b64decode(result.base64_image)
+    
+    # Save temporarily
+    temp_path = "./tmp/extraction_screenshot.png"
+    with open(temp_path, "wb") as f:
+        f.write(image_data)
+    
+    # Upload to Assembly
+    upload_response = upload_media_to_assembly(
+        file_path=temp_path,
+        description="Data extraction screenshot"
+    )
+    
+    print(f"Screenshot uploaded: {upload_response.id}")
+```
+
+### Error Handling
+
+The service includes comprehensive error handling:
+
+```python
+try:
+    response = upload_media_to_assembly("./file.pdf")
+    print(f"Upload successful: {response.id}")
+except Exception as e:
+    print(f"Upload failed: {e}")
+```
+
+### File Organization
+
+- `utils/assembly_media_service.py` - Main service implementation
+- `utils/__init__.py` - Package initialization and exports
+
 ## Development
 
 1. Install development dependencies:
