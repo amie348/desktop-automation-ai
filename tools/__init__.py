@@ -1,6 +1,7 @@
 from .base import CLIResult, ToolResult
 from .collection import ToolCollection
 from .edit import EditTool
+from .upload import UploadTool
 
 # Import platform-specific implementations
 import platform
@@ -15,6 +16,7 @@ __ALL__ = [
     BashTool,
     CLIResult,
     ComputerTool,
+    UploadTool,
     EditTool,
     ToolCollection,
     ToolResult,

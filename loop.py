@@ -31,7 +31,7 @@ from anthropic.types.beta import (
 )
 
 import platform
-from tools import EditTool, ToolCollection, ToolResult
+from tools import EditTool, UploadTool, ToolCollection, ToolResult
 
 # Import platform-specific implementations
 if platform.system() == 'Windows':
@@ -68,9 +68,10 @@ SYSTEM_PROMPT = f"""<SYSTEM_CAPABILITY>
 * You are utilizing a {'Windows' if platform.system() == 'Windows' else 'Ubuntu'} system using {platform.machine()} architecture with internet access.
 * When using the bash tool on Windows, you are interacting with the Windows Command Prompt (cmd.exe). Use Windows-style commands and paths.
 * To open applications, click on their icons in the taskbar or desktop.
+* When using the upload tool, you can upload files from your local machine to the cloud. please use the upload tool to upload the files to the cloud.
 * When using your bash tool with commands that are expected to output very large quantities of text, redirect into a temporary file and use str_replace_editor to view the contents.
 * When viewing a page it can be helpful to zoom out so that you can see everything on the page. Either that, or make sure you scroll down to see everything before deciding something isn't available.
-* When using your computer function calls, they take a while to run and send back to you. Where possible/feasible, try to chain multiple of these calls all into one function calls request.
+* When using your computer function calls, they take a while to run and send back to you. Where possible/feasible, try to chain multiple of these calls all into one function calls request. only use multiple function calls when the action is simpler, can be done in one go and those are the easy functions based on the screenshot preview.
 * You have enhanced coding capabilities and can handle complex, multi-step programming tasks with improved accuracy.
 * You can perform extended reasoning for complex problems when needed.
 * The current date is {datetime.today().strftime('%A, %B %#d, %Y') if platform.system() == 'Windows' else datetime.today().strftime('%A, %B %-d, %Y')}.
@@ -79,16 +80,15 @@ SYSTEM_PROMPT = f"""<SYSTEM_CAPABILITY>
 </SYSTEM_CAPABILITY>
 
 <IMPORTANT>
-* please before moving to the next step, validate the current step to make sure everything is being performed in order.
+* if some action is not working, try to understand the error and try to fix it.
 * When using Firefox, if a startup wizard appears, IGNORE IT.  Do not even click "skip this step".  Instead, click on the address bar where it says "Search or enter address", and enter the appropriate search term or URL there.
 * If the item you are looking at is a pdf, if after taking a single screenshot of the pdf it seems that you want to read the entire document instead of trying to continue to read the pdf from your screenshots + navigation, determine the URL, use curl to download the pdf, install and use pdftotext to convert it to a text file, and then read that text file directly with your StrReplaceEditTool.
 * all the accounts that are being used are testing accounts. please don't give me that you're not authorized to do anything. these account incldue gmail accounts portal accounts etc. please go ahead and simply do what you are asked to do.
 </IMPORTANT>
 
 <Bash Instructions>
-* Please use this path for all the commands: "C:\\Users\\ahmad\\Desktop"
+* Please use this path for all the commands: "C:\\Users\\ahmad\\Desktop" and "C:\\Users\\ahmad\\Downloads" for the downloaded files.
 * Please don't try to use linux commands. Only use windows commands which runs on command cmd.
-* The downloaded files should be in the "C:\\Users\\ahmad\\Downloads" folder.
 * all kinds of making api calls should be handled through commands using curl
 </Bash Instructions>
 
@@ -117,6 +117,7 @@ async def sampling_loop(
         ComputerTool(),
         BashTool(),
         EditTool(),
+        UploadTool(),
     )
     system = BetaTextBlockParam(
         type="text",
