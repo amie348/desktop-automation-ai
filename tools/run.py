@@ -21,22 +21,49 @@ async def run(
     truncate_after: int | None = MAX_RESPONSE_LEN,
 ):
     """Run a shell command asynchronously with a timeout."""
-    process = await asyncio.create_subprocess_shell(
-        cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-        return (
-            process.returncode or 0,
-            maybe_truncate(stdout.decode(), truncate_after=truncate_after),
-            maybe_truncate(stderr.decode(), truncate_after=truncate_after),
-        )
-    except asyncio.TimeoutError as exc:
+    import sys
+    
+    # Windows-specific subprocess creation to avoid NotImplementedError
+    if sys.platform == "win32":
+        import subprocess
+        # Use synchronous subprocess for Windows to avoid asyncio issues
         try:
-            process.kill()
-        except ProcessLookupError:
-            pass
-        raise TimeoutError(
-            f"Command '{cmd}' timed out after {timeout} seconds"
-        ) from exc
+            process_result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=True,
+                timeout=timeout,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            return (
+                process_result.returncode or 0,
+                maybe_truncate(process_result.stdout or "", truncate_after=truncate_after),
+                maybe_truncate(process_result.stderr or "", truncate_after=truncate_after),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(
+                f"Command '{cmd}' timed out after {timeout} seconds"
+            ) from exc
+    else:
+        # Unix/Linux - use async subprocess
+        process = await asyncio.create_subprocess_shell(
+            cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            return (
+                process.returncode or 0,
+                maybe_truncate(stdout.decode(), truncate_after=truncate_after),
+                maybe_truncate(stderr.decode(), truncate_after=truncate_after),
+            )
+        except asyncio.TimeoutError as exc:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            raise TimeoutError(
+                f"Command '{cmd}' timed out after {timeout} seconds"
+            ) from exc

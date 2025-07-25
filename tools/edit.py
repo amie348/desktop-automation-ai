@@ -114,8 +114,10 @@ class EditTool(BaseAnthropicTool):
                     "The `view_range` parameter is not allowed when `path` points to a directory."
                 )
 
+            # Use Windows dir command instead of Unix find
+            # /b = bare format, /s = subdirectories, /a = all attributes
             _, stdout, stderr = await run(
-                rf"find {path} -maxdepth 2 -not -path '*/\.*'"
+                rf'dir "{path}" /b /s 2>nul || dir "{path}" /b'
             )
             if not stderr:
                 stdout = f"Here's the files and directories up to 2 levels deep in {path}, excluding hidden items:\n{stdout}\n"

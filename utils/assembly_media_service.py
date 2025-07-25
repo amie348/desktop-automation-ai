@@ -7,6 +7,13 @@ import requests
 import boto3
 from botocore.exceptions import ClientError
 
+# Load environment variables from .env file if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not available, continue with system env vars
+
 
 class MediaUploadResponse:
     """Response model for media upload."""
@@ -203,6 +210,8 @@ class AssemblyMediaService:
         headers = {
             'Authorization': f'Bearer {secret_key}'
         }
+
+        print(f"[ASSEMBLY MEDIA SERVICE] Uploading media buffer to Assembly...", secret_key)
         
         try:
             response = requests.put(

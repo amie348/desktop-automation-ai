@@ -2,6 +2,14 @@
 Entrypoint for streamlit, see https://docs.streamlit.io/
 """
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    print("Warning: python-dotenv not installed. Install with: pip install python-dotenv")
+    pass
+
 import asyncio
 import base64
 import os

@@ -348,8 +348,24 @@ Alternatives:
             converted_command = self._convert_unix_to_windows(command)
             print(f"DEBUG: Converted command: {converted_command}")
             
-            # Handle compound commands (commands with && or ||)
+            # Check for cd commands in compound commands
             if not _skip_compound and ('&&' in converted_command or '||' in converted_command):
+                # Check if any part of the compound command contains cd
+                parts = converted_command.replace('&&', '||').split('||')
+                for part in parts:
+                    part_cmd = part.strip().split()[0].lower() if part.strip() else ''
+                    if part_cmd in ['cd', 'chdir', 'pwd']:
+                        return 1, """Please don't use 'cd' or 'pwd' commands in compound statements. Instead, use absolute paths.
+
+                        For example:
+                        - Instead of: cd "C:\\Users\\ahmad\\Downloads" && dir
+                        - Use: dir "C:\\Users\\ahmad\\Downloads"
+
+                        - Instead of: cd "C:\\path" && mkdir newfolder  
+                        - Use: mkdir "C:\\path\\newfolder"
+
+                        This approach is more reliable and doesn't require changing directories.""", ""
+                
                 print("DEBUG: Processing as compound command")
                 return await self._run_compound_command(converted_command)
             
@@ -395,12 +411,24 @@ Alternatives:
             # Get base command for routing
             base_cmd = command.split()[0].lower()
             
+            # Check for cd commands and return helpful message
+            if base_cmd in ['cd', 'chdir', 'pwd']:
+                return 1, """Please don't use 'cd' or 'pwd' commands. Instead, use absolute paths in your commands.
+
+                            For example:
+                            - Instead of: cd "C:\\Users\\ahmad\\Downloads" && dir
+                            - Use: dir "C:\\Users\\ahmad\\Downloads"
+
+                            - Instead of: cd "C:\\path" && mkdir newfolder  
+                            - Use: mkdir "C:\\path\\newfolder"
+
+                            This approach is more reliable and doesn't require changing directories.""", ""
+            
             # Define command mappings with their Windows equivalents
             simple_commands = {
                 # Basic file and directory operations
                 'dir': 'dir',
-                'cd': 'cd',
-                'pwd': 'cd',
+                # cd and pwd commands are blocked - see check above
                 'type': lambda x: f'type "{x}"',
                 'copy': lambda x, y: f'copy "{x}" "{y}"',
                 'move': lambda x, y: f'move "{x}" "{y}"',
@@ -412,7 +440,7 @@ Alternatives:
                 
                 # Directory management
                 'tree': 'tree',  # show directory structure
-                'chdir': 'cd',   # alias for cd
+                # chdir is blocked - see check above
                 'rd': lambda x: f'rd "{x}"',  # alias for rmdir
                 
                 # File management
@@ -528,7 +556,11 @@ Alternatives:
                             cmd = simple_commands[base_cmd](args.strip('"'))
                     else:
                         # Commands that don't need argument processing
-                        cmd = simple_commands[base_cmd]
+                        if base_cmd == 'dir' and args:
+                            # dir command with arguments (like directory path)
+                            cmd = f'dir {args}'
+                        else:
+                            cmd = simple_commands[base_cmd]
                         
                     # Add any common switches for better output
                     if base_cmd == 'find':
